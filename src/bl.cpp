@@ -43,6 +43,11 @@
 #include "loading.h"
 #include <wifi-helpers.h>
 #include <sys/time.h>
+
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+#include "rtc_ultra_sleep.h"
+#endif
+
 #ifdef SENSOR_SDA
 #include <bb_scd41.h>
 #include <bb_temperature.h>
@@ -601,7 +606,7 @@ void bl_init(void)
    filesystem_init();
 #endif // EPDIY
 
-#ifdef BOARD_TRMNL_X
+#ifdef BOARD_TRMNL_X 
   // Notify IQS323 task about wakeup type BEFORE starting the task
 
   Log.info("%s [%d]: Display init\r\n", __FILE__, __LINE__);
@@ -1100,17 +1105,31 @@ void bl_init(void)
 
 #endif
 
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  static bool rtc_ok = false;
+  rtc_ok = rtc_ultra_begin();
+#endif
+
   // clock synchronization
+  bool ntpOk = setClock();
+
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  if (rtc_ok && !rtc_ultra_has_valid_time() && ntpOk) {
+    rtc_ultra_set_time_from_system();
+  }
+  #else
   if (setClock())
-  {
-    time_since_sleep = preferences.getUInt(PREFERENCES_LAST_SLEEP_TIME, 0);
-    time_since_sleep = time_since_sleep ? getTime() - time_since_sleep : 0; // may be can be used even if no sync
-  }
-  else
-  {
-    time_since_sleep = 0;
-    Log.info("%s [%d]: Time wasn't synced.\r\n", __FILE__, __LINE__);
-  }
+    {
+      time_since_sleep = preferences.getUInt(PREFERENCES_LAST_SLEEP_TIME, 0);
+      time_since_sleep = time_since_sleep ? getTime() - time_since_sleep : 0; // may be can be used even if no sync
+    }
+    else
+    {
+      time_since_sleep = 0;
+      Log.info("%s [%d]: Time wasn't synced.\r\n", __FILE__, __LINE__);
+    } 
+#endif
+
 
   Log.info("%s [%d]: Time since last sleep: %d\r\n", __FILE__, __LINE__, time_since_sleep);
 
@@ -1287,11 +1306,27 @@ void bl_init(void)
 
   // display go to sleep
   Log_info("%s [%d]: BL done, going to sleep...", __FILE__, __LINE__);
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  uint32_t refreshSeconds = preferences.getUInt(PREFERENCES_SLEEP_TIME_KEY, SLEEP_TIME_TO_SLEEP);
+
+  // Program RV3032 next wake
+  rtc_ultra_program_next_wake(refreshSeconds);
+
+  // Clean shutdown steps you already do
   display_sleep();
-  if (!update_firmware)
-    goToSleep();
-  else
-    ESP.restart();
+  filesystem_deinit();
+  preferences.end();
+
+  // Your hardware-specific “cut power” routine here
+  gpio_set_level(GPIO_NUM_21, 0);
+  //ultra_power_off();  // we could also implement this in a function (release GPIO21 latch)
+
+  return;
+#else
+  display_sleep();
+  if (!update_firmware) goToSleep();
+  else ESP.restart();
+#endif
 }
 
 /**
