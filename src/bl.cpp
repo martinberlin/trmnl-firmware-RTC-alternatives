@@ -1107,6 +1107,7 @@ void bl_init(void)
 
 #ifdef BOARD_TRMNL_X_SENSORIAS3
   static bool rtc_ok = false;
+  Log.info("RTC begin");
   rtc_ok = rtc_ultra_begin();
 #endif
 

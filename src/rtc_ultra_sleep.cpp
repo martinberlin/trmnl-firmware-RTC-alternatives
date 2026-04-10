@@ -1,6 +1,7 @@
 // src/rtc_ultra_sleep.cpp
 #include "rtc_ultra_sleep.h"
 
+#include <ArduinoLog.h>
 #include <Arduino.h>
 #include <Wire.h>
 #include <time.h>
@@ -24,16 +25,16 @@ static bool epoch_sane(uint32_t e) {
 
 bool rtc_ultra_begin()
 {
-  // init(iSDA=-1, iSCL=-1, bWire=true, speed=100k)
-  int rc = g_rtc.init(SENSOR_SDA, SENSOR_SCL, true, 100000);
+  // init(iSDA=-1, iSCL=-1, bWire=true, speed=100k) SENSOR_SDA, SENSOR_SCL, true, 100000
+  int rc = g_rtc.init(-1, -1, true, 100000);
   if (rc != 0) {
     // Using Serial because this is Arduino-style; replace with Log_info if you prefer
-    Serial.printf("[RTC] g_rtc.init failed rc=%d type=%d status=%d\n",
+    Log.info("[RTC] g_rtc.init failed rc=%d type=%d status=%d\n",
                   rc, g_rtc.getType(), g_rtc.getStatus());
     return false;
   }
 
-  Serial.printf("[RTC] init OK type=%d status=%d epoch=%lu\n",
+  Log.info("[RTC] init OK type=%d status=%d epoch=%lu\n",
                 g_rtc.getType(), g_rtc.getStatus(), (unsigned long)g_rtc.getEpoch());
   return true;
 }
@@ -47,7 +48,7 @@ bool rtc_ultra_has_valid_time()
 {
   uint32_t e = rtc_ultra_now_epoch();
   bool ok = epoch_sane(e);
-  Serial.printf("[RTC] epoch=%lu sane=%d\n", (unsigned long)e, ok);
+  Log.info("[RTC] epoch=%lu sane=%d\n", (unsigned long)e, ok);
   return ok;
 }
 
@@ -55,12 +56,12 @@ bool rtc_ultra_set_time_from_system()
 {
   time_t now = time(nullptr);
   if (now < (time_t)MIN_VALID_EPOCH) {
-    Serial.printf("[RTC] system time invalid, now=%ld\n", (long)now);
+    Log.info("[RTC] system time invalid, now=%ld\n", (long)now);
     return false;
   }
 
   g_rtc.setEpoch((uint32_t)now);
-  Serial.printf("[RTC] setEpoch(%lu)\n", (unsigned long)now);
+  Log.info("[RTC] setEpoch(%lu)\n", (unsigned long)now);
   return true;
 }
 
@@ -107,12 +108,12 @@ bool rtc_ultra_program_next_wake(uint32_t refreshSeconds)
     // We'll set tm_sec=0; tm_min=0; tm_hour=7.
     g_rtc.setAlarm(ALARM_TIME, &wake);
 
-    Serial.printf("[RTC] quiet hours: setAlarm(ALARM_TIME) for next 07:00 local\n");
+    Log.info("[RTC] quiet hours: setAlarm(ALARM_TIME) for next 07:00 local\n");
     return true;
   }
 
   // Normal mode: countdown alarm for refreshSeconds
   g_rtc.setCountdownAlarm((int)refreshSeconds);
-  Serial.printf("[RTC] normal hours: setCountdownAlarm(%u seconds)\n", (unsigned)refreshSeconds);
+  Log.info("[RTC] normal hours: setCountdownAlarm(%u seconds)\n", (unsigned)refreshSeconds);
   return true;
 }
