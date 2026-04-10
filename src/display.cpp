@@ -80,7 +80,7 @@ void display_init(void)
 //    bbep.setPasses(3, 3);
 #elif defined( BOARD_TRMNL_X_SENSORIAS3 )
     bbep.initPanel(BB_PANEL_V7_RAW);
-    bbep.setPanelSize(1280, 720, BB_PANEL_FLAG_MIRROR_X, -1600);
+    bbep.setPanelSize(1280, 720, BB_PANEL_FLAG_MIRROR_Y , -1600);
 #elif defined( BOARD_TRMNL_X_SENSORIAC5 )
     bbep.initPanel(BB_PANEL_SENSORIA_C5);
 #elif defined(BOARD_TRMNL_X_PAPERS3)
@@ -93,7 +93,7 @@ void display_init(void)
     Log_info("dev module end");
 }
 
-#ifdef BOARD_TRMNL_X
+#if defined( BOARD_TRMNL_X ) || defined( BOARD_TRMNL_X_SENSORIAC5 ) || defined( BOARD_TRMNL_X_SENSORIAS3 ) 
 
 #define TCA9535_INT 38
 

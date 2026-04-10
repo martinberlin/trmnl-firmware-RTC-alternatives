@@ -53,7 +53,7 @@ struct ApiDisplayInputs
   uint32_t refreshRate;
   String macAddress;
   float batteryVoltage;
-#ifdef BOARD_TRMNL_X
+#if defined(BOARD_TRMNL_X_SENSORIAS3) || defined(BOARD_TRMNL_X) || defined( BOARD_TRMNL_X_SENSORIAC5 )
   int batteryCount;
   int batteryCharging;
   int batteryCurrent;

@@ -112,12 +112,6 @@ void config_gpio_for_lp();
 int png_to_epd(const uint8_t *pPNG, int iDataSize, bool bPrevious);
 static unsigned long startup_time = 0;
 
-#if defined( BOARD_TRMNL_X_EPDIY ) || defined( BOARD_TRMNL_X_SENSORIAS3 ) || defined( BOARD_TRMNL_X_SENSORIAC5 ) || defined( BOARD_TRMNL_X_LILYGO ) || defined( BOARD_TRMNL_X_PAPERS3 )
-// Create stub functions for the touchbar workaround
-void iqs323_task_i2c_lock(void) {}
-void iqs323_task_i2c_unlock(void) {}
-bool otg_message = false;
-#endif // EPDIY
 
 void wait_for_serial() {
 #ifdef WAIT_FOR_SERIAL
@@ -133,7 +127,7 @@ void wait_for_serial() {
 #endif
 }
 
-#ifdef BOARD_TRMNL_X
+#ifdef BOARD_TRMNL_X_SENSORIAS3 
 // ############################ WAKEUP STUB #############################
 #include "rtc_wake_stub_trmnl_x.h"
 // ############################ WAKEUP STUB #############################
@@ -553,7 +547,7 @@ void bl_init(void)
 {
   uint32_t init_time = esp_cpu_get_cycle_count() / esp_rom_get_cpu_ticks_per_us();
 
-#ifdef BOARD_TRMNL_X_SENSORIAS3
+#if defined(BOARD_TRMNL_X_SENSORIAS3) || defined(BOARD_TRMNL_X)
   pinMode(21, OUTPUT); // power hold GPIO must be set high otherwise the board will power itself off
   digitalWrite(21, OUTPUT);
 // Use the RV3032 RTC to hold the power on with a fake low temperature interrupt
