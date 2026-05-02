@@ -10,6 +10,13 @@
 #include <bb_rtc.h>
 #include <config.h>   // SENSOR_SDA, SENSOR_SCL
 
+// STATUS_IRQ1_TRIGGERED was added in bb_rtc 1.2.0; define a fallback so the
+// code compiles cleanly even if an older cached version of the library is
+// installed (the numeric value matches the upstream definition).
+#ifndef STATUS_IRQ1_TRIGGERED
+#define STATUS_IRQ1_TRIGGERED 2
+#endif
+
 static BBRTC g_rtc;
 
 // RV3032 register / bit constants used outside the bb_rtc library
