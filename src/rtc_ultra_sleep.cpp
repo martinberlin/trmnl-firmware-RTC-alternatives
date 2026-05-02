@@ -112,14 +112,23 @@ uint32_t rtc_ultra_compute_next_wake_epoch(uint32_t refreshSeconds)
 // until cleared by software (level mode). The default (ILP=0) is pulse mode where
 // INT is only LOW for ~7.8 ms -- far too short for the ESP32-S3 to boot (~300-500 ms)
 // and latch IO21 HIGH via the Q3 power-hold transistor before power is cut.
+// Uses Wire directly because the installed bb_rtc version does not expose getBB().
 static void rv3032_set_ilp_level()
 {
-  BBI2C *pBB = g_rtc.getBB();
-  uint8_t ctrl2 = 0;
-  I2CReadRegister(pBB, RTC_RV3032_ADDR, RV3032_CTRL2_REG, &ctrl2, 1);
-  uint8_t buf[2] = {RV3032_CTRL2_REG, (uint8_t)(ctrl2 | RV3032_CTRL2_ILP)};
-  I2CWrite(pBB, RTC_RV3032_ADDR, buf, 2);
-  Log.info("[RTC] ILP=1 level mode set (ctrl2=0x%02X)\n", buf[1]);
+  // Read current CTRL2 value
+  Wire.beginTransmission(RTC_RV3032_ADDR);
+  Wire.write(RV3032_CTRL2_REG);
+  Wire.endTransmission(false); // repeated-start so the slave keeps the register pointer
+  Wire.requestFrom((uint8_t)RTC_RV3032_ADDR, (uint8_t)1);
+  uint8_t ctrl2 = Wire.available() ? Wire.read() : 0;
+
+  // Write back with ILP bit set
+  Wire.beginTransmission(RTC_RV3032_ADDR);
+  Wire.write(RV3032_CTRL2_REG);
+  Wire.write((uint8_t)(ctrl2 | RV3032_CTRL2_ILP));
+  Wire.endTransmission();
+
+  Log.info("[RTC] ILP=1 level mode set (ctrl2=0x%02X)\n", ctrl2 | RV3032_CTRL2_ILP);
 }
 
 bool rtc_ultra_program_next_wake(uint32_t refreshSeconds)
