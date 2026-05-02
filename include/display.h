@@ -164,4 +164,13 @@ void display_show_msg_qa(uint8_t *image_buffer, const float *voltage, const floa
  */
 void display_sleep(void);
 
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+/**
+ * @brief Debug: display the next scheduled wake time at the top of the screen.
+ *        The e-paper retains this image without power.
+ * @param label  Formatted wake time string, e.g. "Next: 15:30"
+ */
+void display_show_wake_label(const char *label);
+#endif
+
 #endif

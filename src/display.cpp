@@ -1977,3 +1977,26 @@ void display_sleep(void)
     bbep.deInit();
 #endif
 }
+
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+/**
+ * @brief Debug: overlay the next scheduled wake time at the top of the display.
+ *        The e-paper retains this image without power, so the wake time remains
+ *        visible while the device is off.
+ * @param label  Null-terminated string, e.g. "Next: 15:30"
+ */
+void display_show_wake_label(const char *label)
+{
+    Log_info("display_show_wake_label: %s", label);
+    BB_RECT rect;
+
+    bbep.fillScreen(BBEP_WHITE);
+    bbep.setFont(Roboto_Black_24);
+    bbep.setTextColor(BBEP_BLACK, BBEP_WHITE);
+    bbep.getStringBox(label, &rect);
+    // Centre horizontally; place near the top of the 1280x720 panel
+    bbep.setCursor((bbep.width() - rect.w) / 2, 40);
+    bbep.println(label);
+    bbep.fullUpdate(CLEAR_FAST, true); // wait for completion before display_sleep()
+}
+#endif // BOARD_TRMNL_X_SENSORIAS3

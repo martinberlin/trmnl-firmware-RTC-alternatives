@@ -94,6 +94,20 @@ static void compute_next_7am_local_tm(time_t now, struct tm *out)
   *out = lt;
 }
 
+uint32_t rtc_ultra_compute_next_wake_epoch(uint32_t refreshSeconds)
+{
+  time_t now = time(nullptr);
+
+  if (now >= (time_t)MIN_VALID_EPOCH && in_quiet_hours_local(now))
+  {
+    struct tm wake;
+    compute_next_7am_local_tm(now, &wake);
+    return (uint32_t)mktime(&wake);
+  }
+
+  return (uint32_t)(now + (time_t)refreshSeconds);
+}
+
 // Set RV3032 ILP=1 (interrupt level/pulse bit) so the INT pin stays asserted LOW
 // until cleared by software (level mode). The default (ILP=0) is pulse mode where
 // INT is only LOW for ~7.8 ms -- far too short for the ESP32-S3 to boot (~300-500 ms)
@@ -102,8 +116,8 @@ static void rv3032_set_ilp_level()
 {
   BBI2C *pBB = g_rtc.getBB();
   uint8_t ctrl2 = 0;
-  I2CReadRegister(pBB, RTC_RV3032_ADDR, 0x11, &ctrl2, 1);
-  uint8_t buf[2] = {0x11, (uint8_t)(ctrl2 | 0x80)}; // bit 7 = ILP
+  I2CReadRegister(pBB, RTC_RV3032_ADDR, RV3032_CTRL2_REG, &ctrl2, 1);
+  uint8_t buf[2] = {RV3032_CTRL2_REG, (uint8_t)(ctrl2 | RV3032_CTRL2_ILP)};
   I2CWrite(pBB, RTC_RV3032_ADDR, buf, 2);
   Log.info("[RTC] ILP=1 level mode set (ctrl2=0x%02X)\n", buf[1]);
 }

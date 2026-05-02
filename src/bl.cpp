@@ -1313,6 +1313,17 @@ void bl_init(void)
   // Program RV3032 next wake (only if RTC was successfully initialised)
   if (rtc_ok) {
     rtc_ultra_program_next_wake(refreshSeconds);
+
+    // Debug: show next wake time at the top of the e-paper display.
+    // The image is retained without power so the time is visible while the device is off.
+    uint32_t wake_epoch = rtc_ultra_compute_next_wake_epoch(refreshSeconds);
+    struct tm wake_tm;
+    time_t wake_t = (time_t)wake_epoch;
+    localtime_r(&wake_t, &wake_tm);
+    char wake_label[24];
+    snprintf(wake_label, sizeof(wake_label), "Next: %02d:%02d",
+             wake_tm.tm_hour, wake_tm.tm_min);
+    display_show_wake_label(wake_label);
   } else {
     Log.warning("[RTC] skipping alarm programming - RTC not initialised\n");
   }
