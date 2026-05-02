@@ -1115,7 +1115,9 @@ void bl_init(void)
   bool ntpOk = setClock();
 
 #ifdef BOARD_TRMNL_X_SENSORIAS3
-  if (rtc_ok && !rtc_ultra_has_valid_time() && ntpOk) {
+  if (rtc_ok && ntpOk) {
+    // Always sync RTC from NTP whenever a WiFi connection is available so that a
+    // plausible-but-wrong RTC time (epoch >= 2024-01-01) gets corrected too.
     rtc_ultra_set_time_from_system();
   }
   #else

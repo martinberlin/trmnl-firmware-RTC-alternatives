@@ -1990,13 +1990,22 @@ void display_show_wake_label(const char *label)
     Log_info("display_show_wake_label: %s", label);
     BB_RECT rect;
 
-    bbep.fillScreen(BBEP_WHITE);
     bbep.setFont(Roboto_Black_24);
     bbep.setTextColor(BBEP_BLACK, BBEP_WHITE);
     bbep.getStringBox(label, &rect);
-    // Centre horizontally; place near the top of the 1280x720 panel
-    bbep.setCursor((bbep.width() - rect.w) / 2, 40);
+
+    // Place near the top of the panel, horizontally centred
+    int label_x = (bbep.width() - rect.w) / 2;
+    int label_y = 40;
+
+    // Clear only the small strip that the label occupies (leave the rest of the image intact)
+    BB_RECT strip = { 0, 0, bbep.width(), label_y + rect.h + 8 };
+    bbep.fillRect(strip.x, strip.y, strip.w, strip.h, BBEP_WHITE);
+
+    bbep.setCursor(label_x, label_y);
     bbep.println(label);
-    bbep.fullUpdate(CLEAR_FAST, true); // wait for completion before display_sleep()
+
+    // Refresh only the label strip — do not clear or repaint the rest of the display
+    bbep.fullUpdate(CLEAR_NONE, true, &strip);
 }
 #endif // BOARD_TRMNL_X_SENSORIAS3
