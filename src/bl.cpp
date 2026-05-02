@@ -98,7 +98,7 @@ static void downloadSetupImage();                    // download and display set
 static void resetDeviceCredentials(void);            // reset device credentials API key, Friendly ID, Wi-Fi SSID and password
 static void checkAndPerformFirmwareUpdate(void);     // OTA update
 static void goToSleep(void);                         // sleep preparing
-static bool setClock(void);                          // clock synchronization
+static bool setClock(bool force_ntp = false);        // clock synchronization
 static float readBatteryVoltage(void);               // battery voltage reading
 static void submitStoredLogs(void);
 static void writeSpecialFunction(SPECIAL_FUNCTION function);
@@ -1121,7 +1121,14 @@ void bl_init(void)
 #endif
 
   // clock synchronization
+  // For SENSORIAS3 the system clock was just seeded from the RTC (which may
+  // have the wrong time until NTP corrects it). Always force an NTP query so
+  // the RTC is corrected on every WiFi-connected wake cycle.
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  bool ntpOk = setClock(/*force_ntp=*/true);
+#else
   bool ntpOk = setClock();
+#endif
 
 #ifdef BOARD_TRMNL_X_SENSORIAS3
   if (rtc_ok && ntpOk) {
@@ -1343,6 +1350,11 @@ void bl_init(void)
   display_sleep();
   filesystem_deinit();
   preferences.end();
+
+  // Float the I2C pins so they don't fight the RTC or pull current while off.
+  Wire.end();
+  pinMode(SENSOR_SCL, INPUT);
+  pinMode(SENSOR_SDA, INPUT);
 
   // Release power-hold latch: RTC INT will restore power on next alarm
   gpio_set_level(GPIO_NUM_21, 0);
@@ -3112,7 +3124,7 @@ void config_gpio_for_lp() {
  * @param none
  * @return none
  */
-static bool setClock()
+static bool setClock(bool force_ntp)
 {
   int iDeltaTime;
   Preferences prefs;
@@ -3123,7 +3135,7 @@ static bool setClock()
   uint32_t u32Epoch = prefs.getUInt("last_sync", 0); // Get the last time sync time
   iDeltaTime = getTime() - u32Epoch; // Number of seconds since the last sync
   Log.info("%s [%d]: epoch time: %d iDelta: %d\r\n", __FILE__, __LINE__, getTime(), iDeltaTime);
-  if (u32Epoch != 0 && iDeltaTime > 0 && iDeltaTime < 24*60*60) { // Less than 24h, no need to sync the time
+  if (!force_ntp && u32Epoch != 0 && iDeltaTime > 0 && iDeltaTime < 24*60*60) { // Less than 24h, no need to sync the time
       Log.info("%s [%d]: Skipping time sync\r\n", __FILE__, __LINE__);
       prefs.end();
       return true;
