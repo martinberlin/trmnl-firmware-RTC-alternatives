@@ -13,8 +13,11 @@
 static BBRTC g_rtc;
 
 // RV3032 register / bit constants used outside the bb_rtc library
-static constexpr uint8_t RV3032_CTRL2_REG  = 0x11; // Control 2 register
-static constexpr uint8_t RV3032_CTRL2_ILP  = 0x80; // bit 7: Interrupt Level/Pulse (1=level, 0=pulse)
+static constexpr uint8_t RV3032_CTRL2_REG       = 0x11; // Control 2 register
+static constexpr uint8_t RV3032_CTRL2_ILP       = 0x80; // bit 7: Interrupt Level/Pulse (1=level, 0=pulse)
+static constexpr uint8_t RV3032_CTRL3_REG       = 0x12; // Control 3 register
+static constexpr uint8_t RV3032_CTRL3_BSM_MASK  = 0x0C; // bits [3:2]: Backup Switch Mode
+static constexpr uint8_t RV3032_CTRL3_BSM_DIRECT = 0x04; // BSM[1:0]=01 → direct VBACKUP switching
 
 // Quiet hours: 23:00 -> 07:00 (local time)
 static constexpr int QUIET_START_HOUR = 23;
@@ -41,6 +44,9 @@ bool rtc_ultra_begin()
 
   Log.info("[RTC] init OK type=%d status=%d epoch=%lu\n",
                 g_rtc.getType(), g_rtc.getStatus(), (unsigned long)g_rtc.getEpoch());
+  if (g_rtc.getStatus() & STATUS_IRQ1_TRIGGERED) {
+    Log.info("[RTC] timer/alarm flag was set -> this wakeup was triggered by the RTC alarm\n");
+  }
   return true;
 }
 
@@ -122,6 +128,30 @@ uint32_t rtc_ultra_compute_next_wake_epoch(uint32_t refreshSeconds)
   return (uint32_t)(now + (time_t)refreshSeconds);
 }
 
+// The bb_rtc setCountdownAlarm() explicitly zeros CTRL3, which sets
+// BSM[1:0]=00 (VBACKUP switchover disabled).  Without backup power the
+// RV3032 loses its clock the moment VDD is cut by the power-hold circuit,
+// so the countdown timer never reaches zero and the INT pin never asserts.
+// This function restores BSM=01 (direct switching) so the chip continues
+// running from VBACKUP after the main supply is removed.
+static void rv3032_restore_backup_switch()
+{
+  Wire.beginTransmission(RTC_RV3032_ADDR);
+  Wire.write(RV3032_CTRL3_REG);
+  Wire.endTransmission(false);
+  Wire.requestFrom((uint8_t)RTC_RV3032_ADDR, (uint8_t)1);
+  uint8_t ctrl3 = Wire.available() ? Wire.read() : 0;
+
+  ctrl3 = (ctrl3 & ~RV3032_CTRL3_BSM_MASK) | RV3032_CTRL3_BSM_DIRECT;
+
+  Wire.beginTransmission(RTC_RV3032_ADDR);
+  Wire.write(RV3032_CTRL3_REG);
+  Wire.write(ctrl3);
+  Wire.endTransmission();
+
+  Log.info("[RTC] CTRL3 BSM=01 (direct VBACKUP switching): 0x%02X\n", ctrl3);
+}
+
 // Set RV3032 ILP=1 (interrupt level/pulse bit) so the INT pin stays asserted LOW
 // until cleared by software (level mode). The default (ILP=0) is pulse mode where
 // INT is only LOW for ~7.8 ms -- far too short for the ESP32-S3 to boot (~300-500 ms)
@@ -160,13 +190,14 @@ bool rtc_ultra_program_next_wake(uint32_t refreshSeconds)
 
     // RV3032: ALARM_TIME matches hour+minute; set tm_sec=0, tm_min=0, tm_hour=7.
     g_rtc.setAlarm(ALARM_TIME, &wake);
-
+    rv3032_restore_backup_switch(); // CTRL3 may have been cleared; ensure VBACKUP stays on
     Log.info("[RTC] quiet hours: setAlarm(ALARM_TIME) for next 07:00 local\n");
   }
   else
   {
     // Normal mode: countdown alarm for refreshSeconds
     g_rtc.setCountdownAlarm((int)refreshSeconds);
+    rv3032_restore_backup_switch(); // undo CTRL3 zeroing done by setCountdownAlarm
     Log.info("[RTC] normal hours: setCountdownAlarm(%u seconds)\n", (unsigned)refreshSeconds);
   }
 

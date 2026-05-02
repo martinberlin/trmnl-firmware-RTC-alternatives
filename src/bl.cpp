@@ -720,6 +720,21 @@ void bl_init(void)
   }
 #endif
 
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  // Initialise the RTC early — before the SCD41 light-sleep — so the boot
+  // status (including whether the previous alarm fired) appears in the serial
+  // log before USB-CDC is suspended by esp_light_sleep_start().
+  static bool rtc_ok = false;
+  rtc_ok = rtc_ultra_begin();
+  if (rtc_ok) {
+    // Seed the system clock from the RTC so sensor sample timestamps are
+    // meaningful.  NTP (called after WiFi connects) will overwrite this with
+    // a precise value and push it back to the RTC via
+    // rtc_ultra_set_time_from_system().
+    rtc_ultra_sync_system_clock();
+  }
+#endif
+
 #ifdef SENSOR_SDA
   // check if there is a SCD41 or supported temperature sensor attached
   if (scd41.init(SENSOR_SDA, SENSOR_SCL) == SCD41_SUCCESS) {
@@ -734,6 +749,10 @@ void bl_init(void)
     scd41.triggerSample(); // trigger a 'one-shot' sample that takes about 5 seconds to complete
     esp_sleep_enable_timer_wakeup(5000 * 1000L); // sleep for 5 seconds for sample to finish
     esp_light_sleep_start();
+#if defined(DEV_FIRMWARE) && defined(ARDUINO_USB_CDC_ON_BOOT)
+    delay(500); // allow USB-CDC to re-enumerate after light sleep
+    wait_for_serial();
+#endif
     if (scd41.getSample() == SCD41_SUCCESS) {
         time((time_t *)&lastTime); // get the UTC epoch time that the same was captured
         lastCO2 = scd41.co2();
@@ -754,6 +773,10 @@ void bl_init(void)
     bbt.start(); // start the sensor
     esp_sleep_enable_timer_wakeup(5000 * 1000L); // sleep for 5 seconds for sample to finish
     esp_light_sleep_start();
+#if defined(DEV_FIRMWARE) && defined(ARDUINO_USB_CDC_ON_BOOT)
+    delay(500); // allow USB-CDC to re-enumerate after light sleep
+    wait_for_serial();
+#endif
     if (bbt.getSample(&bbts) == BBT_SUCCESS) {
         time((time_t *)&lastTime); // get the UTC epoch time that the same was captured
         lastTemp = bbts.temperature;
@@ -1106,18 +1129,8 @@ void bl_init(void)
 #endif
 
 #ifdef BOARD_TRMNL_X_SENSORIAS3
-  static bool rtc_ok = false;
-  Log.info("RTC begin");
-  rtc_ok = rtc_ultra_begin();
-  if (rtc_ok) {
-    // Set the ESP32 system clock from the RTC immediately so that time() is
-    // correct throughout this cold-boot session (wake label, quiet hours,
-    // sensor sample timestamps).  NTP will overwrite this with a more accurate
-    // value when it syncs (and rtc_ultra_set_time_from_system will push it back
-    // to the RTC), but having a good baseline avoids computing wake epochs from
-    // epoch 0.
-    rtc_ultra_sync_system_clock();
-  }
+  // RTC was already initialised before the sensor block (see above) so that
+  // boot-status logs appear before esp_light_sleep_start() suspends USB-CDC.
 #endif
 
   // clock synchronization
