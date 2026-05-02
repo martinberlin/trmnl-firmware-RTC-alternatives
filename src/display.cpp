@@ -1990,17 +1990,18 @@ void display_show_wake_label(const char *label)
     Log_info("display_show_wake_label: %s", label);
     BB_RECT rect;
 
-    bbep.setFont(Roboto_Black_24);
+    bbep.setFont(Inter_18);
     bbep.setTextColor(BBEP_BLACK, BBEP_WHITE);
     bbep.getStringBox(label, &rect);
 
     // Place near the top of the panel, horizontally centred
-    int label_x = (bbep.width() - rect.w) / 2;
-    int label_y = 40;
+    int label_x = bbep.width() - rect.w;
+    int label_y = 30;
 
     // Clear only the small strip that the label occupies (leave the rest of the image intact)
-    BB_RECT strip = { 0, 0, bbep.width(), label_y + rect.h + 8 };
-    bbep.fillRect(strip.x, strip.y, strip.w, strip.h, BBEP_WHITE);
+    BB_RECT strip = { label_x, 0, rect.w +10, rect.h + 18 };
+    // Do not paint White background so less invasive
+    //bbep.fillRect(strip.x, strip.y, strip.w, strip.h, BBEP_WHITE);
 
     bbep.setCursor(label_x, label_y);
     bbep.println(label);
