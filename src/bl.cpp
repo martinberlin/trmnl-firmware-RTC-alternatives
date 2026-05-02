@@ -554,7 +554,7 @@ void bl_init(void)
 
 #if defined(BOARD_TRMNL_X_SENSORIAS3) || defined(BOARD_TRMNL_X)
   pinMode(21, OUTPUT); // power hold GPIO must be set high otherwise the board will power itself off
-  digitalWrite(21, OUTPUT);
+  digitalWrite(21, HIGH);
 // Use the RV3032 RTC to hold the power on with a fake low temperature interrupt
 //Wire.begin(40,41);
 //Wire.beginTransmission(0x51); // RV3032 address
@@ -1310,17 +1310,20 @@ void bl_init(void)
 #ifdef BOARD_TRMNL_X_SENSORIAS3
   uint32_t refreshSeconds = preferences.getUInt(PREFERENCES_SLEEP_TIME_KEY, SLEEP_TIME_TO_SLEEP);
 
-  // Program RV3032 next wake
-  rtc_ultra_program_next_wake(refreshSeconds);
+  // Program RV3032 next wake (only if RTC was successfully initialised)
+  if (rtc_ok) {
+    rtc_ultra_program_next_wake(refreshSeconds);
+  } else {
+    Log.warning("[RTC] skipping alarm programming - RTC not initialised\n");
+  }
 
-  // Clean shutdown steps you already do
+  // Clean shutdown steps
   display_sleep();
   filesystem_deinit();
   preferences.end();
 
-  // Your hardware-specific “cut power” routine here
+  // Release power-hold latch: RTC INT will restore power on next alarm
   gpio_set_level(GPIO_NUM_21, 0);
-  //ultra_power_off();  // we could also implement this in a function (release GPIO21 latch)
 
   return;
 #else

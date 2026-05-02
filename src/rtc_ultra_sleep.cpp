@@ -11,6 +11,10 @@
 
 static BBRTC g_rtc;
 
+// RV3032 register / bit constants used outside the bb_rtc library
+static constexpr uint8_t RV3032_CTRL2_REG  = 0x11; // Control 2 register
+static constexpr uint8_t RV3032_CTRL2_ILP  = 0x80; // bit 7: Interrupt Level/Pulse (1=level, 0=pulse)
+
 // Quiet hours: 23:00 -> 07:00 (local time)
 static constexpr int QUIET_START_HOUR = 23;
 static constexpr int QUIET_END_HOUR   = 7;
@@ -25,8 +29,8 @@ static bool epoch_sane(uint32_t e) {
 
 bool rtc_ultra_begin()
 {
-  // init(iSDA=-1, iSCL=-1, bWire=true, speed=100k) SENSOR_SDA, SENSOR_SCL, true, 100000
-  int rc = g_rtc.init(-1, -1, true, 100000);
+  // Use the board-defined I2C pins (SENSOR_SDA=39, SENSOR_SCL=40 for SENSORIAS3)
+  int rc = g_rtc.init(SENSOR_SDA, SENSOR_SCL, true, 100000);
   if (rc != 0) {
     // Using Serial because this is Arduino-style; replace with Log_info if you prefer
     Log.info("[RTC] g_rtc.init failed rc=%d type=%d status=%d\n",
@@ -90,6 +94,20 @@ static void compute_next_7am_local_tm(time_t now, struct tm *out)
   *out = lt;
 }
 
+// Set RV3032 ILP=1 (interrupt level/pulse bit) so the INT pin stays asserted LOW
+// until cleared by software (level mode). The default (ILP=0) is pulse mode where
+// INT is only LOW for ~7.8 ms -- far too short for the ESP32-S3 to boot (~300-500 ms)
+// and latch IO21 HIGH via the Q3 power-hold transistor before power is cut.
+static void rv3032_set_ilp_level()
+{
+  BBI2C *pBB = g_rtc.getBB();
+  uint8_t ctrl2 = 0;
+  I2CReadRegister(pBB, RTC_RV3032_ADDR, 0x11, &ctrl2, 1);
+  uint8_t buf[2] = {0x11, (uint8_t)(ctrl2 | 0x80)}; // bit 7 = ILP
+  I2CWrite(pBB, RTC_RV3032_ADDR, buf, 2);
+  Log.info("[RTC] ILP=1 level mode set (ctrl2=0x%02X)\n", buf[1]);
+}
+
 bool rtc_ultra_program_next_wake(uint32_t refreshSeconds)
 {
   // Always clear alarm flags first so INT isn't stuck low from a previous alarm
@@ -103,17 +121,22 @@ bool rtc_ultra_program_next_wake(uint32_t refreshSeconds)
     struct tm wake;
     compute_next_7am_local_tm(now, &wake);
 
-    // RV3032: no seconds precision; bb_rtc doc says ALARM_TIME = hour:second match.
-    // In practice for RV3032 you’ll get hour+minute granularity (library adapts).
-    // We'll set tm_sec=0; tm_min=0; tm_hour=7.
+    // RV3032: ALARM_TIME matches hour+minute; set tm_sec=0, tm_min=0, tm_hour=7.
     g_rtc.setAlarm(ALARM_TIME, &wake);
 
     Log.info("[RTC] quiet hours: setAlarm(ALARM_TIME) for next 07:00 local\n");
-    return true;
+  }
+  else
+  {
+    // Normal mode: countdown alarm for refreshSeconds
+    g_rtc.setCountdownAlarm((int)refreshSeconds);
+    Log.info("[RTC] normal hours: setCountdownAlarm(%u seconds)\n", (unsigned)refreshSeconds);
   }
 
-  // Normal mode: countdown alarm for refreshSeconds
-  g_rtc.setCountdownAlarm((int)refreshSeconds);
-  Log.info("[RTC] normal hours: setCountdownAlarm(%u seconds)\n", (unsigned)refreshSeconds);
+  // Keep INT asserted (level mode) until software clears it on next boot.
+  // This is required so the power-hold circuit (Q1->Q2) stays enabled long enough
+  // for the MCU to boot and set IO21 HIGH to latch the Q3 power-hold transistor.
+  rv3032_set_ilp_level();
+
   return true;
 }
