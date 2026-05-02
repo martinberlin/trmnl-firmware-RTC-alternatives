@@ -1109,6 +1109,15 @@ void bl_init(void)
   static bool rtc_ok = false;
   Log.info("RTC begin");
   rtc_ok = rtc_ultra_begin();
+  if (rtc_ok) {
+    // Set the ESP32 system clock from the RTC immediately so that time() is
+    // correct throughout this cold-boot session (wake label, quiet hours,
+    // sensor sample timestamps).  NTP will overwrite this with a more accurate
+    // value when it syncs (and rtc_ultra_set_time_from_system will push it back
+    // to the RTC), but having a good baseline avoids computing wake epochs from
+    // epoch 0.
+    rtc_ultra_sync_system_clock();
+  }
 #endif
 
   // clock synchronization

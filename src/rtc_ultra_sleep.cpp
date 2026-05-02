@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include <bb_rtc.h>
 #include <config.h>   // SENSOR_SDA, SENSOR_SCL
@@ -54,6 +55,19 @@ bool rtc_ultra_has_valid_time()
   bool ok = epoch_sane(e);
   Log.info("[RTC] epoch=%lu sane=%d\n", (unsigned long)e, ok);
   return ok;
+}
+
+bool rtc_ultra_sync_system_clock()
+{
+  uint32_t e = rtc_ultra_now_epoch();
+  if (!epoch_sane(e)) {
+    Log.info("[RTC] sync_system_clock: epoch %lu not sane, skipping\n", (unsigned long)e);
+    return false;
+  }
+  struct timeval tv = { (time_t)e, 0 };
+  settimeofday(&tv, nullptr);
+  Log.info("[RTC] system clock set from RTC: epoch=%lu\n", (unsigned long)e);
+  return true;
 }
 
 bool rtc_ultra_set_time_from_system()
