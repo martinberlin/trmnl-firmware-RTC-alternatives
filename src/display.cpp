@@ -1995,8 +1995,8 @@ void display_show_wake_label(const char *label)
     bbep.getStringBox(label, &rect);
 
     // Place near the top of the panel, horizontally centred
-    int label_x = bbep.width() - rect.w;
-    int label_y = 30;
+    int label_x = bbep.width() - rect.w -10;
+    int label_y = 35;
 
     // Clear only the small strip that the label occupies (leave the rest of the image intact)
     BB_RECT strip = { label_x, 0, rect.w +10, rect.h + 18 };

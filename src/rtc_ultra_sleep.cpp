@@ -49,10 +49,15 @@ bool rtc_ultra_begin()
     return false;
   }
 
+  int status = g_rtc.getStatus();
   Log.info("[RTC] init OK type=%d status=%d epoch=%lu\n",
-                g_rtc.getType(), g_rtc.getStatus(), (unsigned long)g_rtc.getEpoch());
-  if (g_rtc.getStatus() & STATUS_IRQ1_TRIGGERED) {
+                g_rtc.getType(), status, (unsigned long)g_rtc.getEpoch());
+  if (status & STATUS_IRQ1_TRIGGERED) {
     Log.info("[RTC] timer/alarm flag was set -> this wakeup was triggered by the RTC alarm\n");
+    // Important: release the RTC interrupt line after a wake so the next alarm
+    // can be armed cleanly.
+    g_rtc.clearAlarms();
+    Log.info("[RTC] cleared alarm flags after RTC wake\n");
   }
   return true;
 }
@@ -132,7 +137,14 @@ uint32_t rtc_ultra_compute_next_wake_epoch(uint32_t refreshSeconds)
     return (uint32_t)mktime(&wake);
   }
 
-  return (uint32_t)(now + (time_t)refreshSeconds);
+  // Keep this calculation aligned with rtc_ultra_program_next_wake(), which
+  // rounds normal wake times up to the next whole minute before programming
+  // ALARM_TIME on the RV3032.
+  time_t wake_t = now + (time_t)refreshSeconds;
+  if ((wake_t % 60) != 0) {
+    wake_t += (60 - (wake_t % 60));
+  }
+  return (uint32_t)wake_t;
 }
 
 // The bb_rtc setCountdownAlarm() explicitly zeros CTRL3, which sets
@@ -195,23 +207,31 @@ bool rtc_ultra_program_next_wake(uint32_t refreshSeconds)
     struct tm wake;
     compute_next_7am_local_tm(now, &wake);
 
-    // RV3032: ALARM_TIME matches hour+minute; set tm_sec=0, tm_min=0, tm_hour=7.
+    // Minimal alarm path: clearAlarms() + setAlarm(ALARM_TIME, &wake).
     g_rtc.setAlarm(ALARM_TIME, &wake);
-    rv3032_restore_backup_switch(); // CTRL3 may have been cleared; ensure VBACKUP stays on
     Log.info("[RTC] quiet hours: setAlarm(ALARM_TIME) for next 07:00 local\n");
   }
   else
   {
-    // Normal mode: countdown alarm for refreshSeconds
-    g_rtc.setCountdownAlarm((int)refreshSeconds);
-    rv3032_restore_backup_switch(); // undo CTRL3 zeroing done by setCountdownAlarm
-    Log.info("[RTC] normal hours: setCountdownAlarm(%u seconds)\n", (unsigned)refreshSeconds);
+    // Normal mode: use a time alarm instead of the RV3032 countdown timer.
+    // This relies on the RTC wall-clock time (kept in sync from NTP) and avoids
+    // uncertainty around countdown-timer state after full power removal.
+    time_t wake_t = now + (time_t)refreshSeconds;
+    if ((wake_t % 60) != 0) {
+      wake_t += (60 - (wake_t % 60)); // round up so the wake is never early
+    }
+
+    struct tm wake;
+    localtime_r(&wake_t, &wake);
+    wake.tm_sec = 0;
+
+    // Minimal alarm path: clearAlarms() + setAlarm(ALARM_TIME, &wake).
+    g_rtc.setAlarm(ALARM_TIME, &wake);
+    char wake_hhmm[8];
+    snprintf(wake_hhmm, sizeof(wake_hhmm), "%02d:%02d", wake.tm_hour, wake.tm_min);
+    Log.info("[RTC] normal hours: setAlarm(ALARM_TIME) for %s local\n", wake_hhmm);
   }
 
-  // Keep INT asserted (level mode) until software clears it on next boot.
-  // This is required so the power-hold circuit (Q1->Q2) stays enabled long enough
-  // for the MCU to boot and set IO21 HIGH to latch the Q3 power-hold transistor.
-  rv3032_set_ilp_level();
 
   return true;
 }

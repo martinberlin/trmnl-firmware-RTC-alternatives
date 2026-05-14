@@ -16,6 +16,13 @@
 // Compile-time firmware version string
 #define FW_VERSION_STRING TOSTRING(FW_MAJOR_VERSION) "." TOSTRING(FW_MINOR_VERSION) "." TOSTRING(FW_PATCH_VERSION) FW_VERSION_SUFFIX
 
+// POSIX timezone string used by localtime_r()/mktime().
+// This affects the displayed "Next:" wake label and quiet-hours scheduling.
+// Europe summer time example: CET-1CEST,M3.5.0/2,M10.5.0/3
+#ifndef DEVICE_TIMEZONE
+#define DEVICE_TIMEZONE "CET-1CEST,M3.5.0/2,M10.5.0/3"
+#endif
+
 #define LOG_MAX_NOTES_NUMBER 10
 
 #define PREFERENCES_API_KEY "api_key"

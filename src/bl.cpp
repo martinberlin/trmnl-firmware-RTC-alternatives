@@ -112,6 +112,7 @@ static bool checkCurrentFileName(String &newName);
 static bool saveCurrentFileName(String &name);
 void fixFileName(const char *src, char *dest);
 static DeviceStatusStamp getDeviceStatusStamp();
+static void configureDeviceTimezone();
 void log_nvs_usage();
 void config_gpio_for_lp();
 int png_to_epd(const uint8_t *pPNG, int iDataSize, bool bPrevious);
@@ -130,6 +131,13 @@ void wait_for_serial() {
     }
   Log_info("## Waited for serial.. %d ms", idx * 100);
 #endif
+}
+
+static void configureDeviceTimezone()
+{
+  setenv("TZ", DEVICE_TIMEZONE, 1);
+  tzset();
+  Log_info("Timezone configured: %s", DEVICE_TIMEZONE);
 }
 
 #ifdef BOARD_TRMNL_X_SENSORIAS3 
@@ -572,6 +580,7 @@ void bl_init(void)
   wait_for_serial();
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
 #endif
+  configureDeviceTimezone();
   Log_info("BL init success");
   pins_init();
   vBatt = readBatteryVoltage(); // Read the battery voltage BEFORE WiFi is turned on
@@ -735,12 +744,11 @@ void bl_init(void)
   }
 #endif
 
-#ifdef SENSOR_SDA
+/* #ifdef SENSOR_SDA
   // check if there is a SCD41 or supported temperature sensor attached
   if (scd41.init(SENSOR_SDA, SENSOR_SCL) == SCD41_SUCCESS) {
     bCO2 = true;
     Log.info("%s [%d]: SCD41 sensor found!\r\n", __FILE__, __LINE__);
-//    scd41.start(SCD41_MODE_PERIODIC);
     scd41.wakeup();
     // The SCD41 needs to be re-initialized after big Vcc variations from the last wakeup
     // put it in a 'confused' state. If we don't re-initialize it, it won't generate more samples
@@ -793,7 +801,7 @@ void bl_init(void)
   if (!bCO2 && iSensorType < 0) {
     Log.info("%s [%d]: No sensor found on I2C bus %d/%d\r\n", __FILE__, __LINE__, SENSOR_SDA, SENSOR_SCL);
   }
-#endif // SENSOR_SDA
+#endif // SENSOR_SDA */
 
 #if !defined( BOARD_TRMNL_X ) && !defined( BOARD_TRMNL_X_EPDIY) && !defined( BOARD_TRMNL_X_LILYGO ) && !defined( BOARD_TRMNL_X_SENSORIAC5 ) && !defined( BOARD_TRMNL_X_SENSORIAS3 ) 
   if (double_click)
@@ -1340,14 +1348,21 @@ void bl_init(void)
   Log_info("%s [%d]: BL done, going to sleep...", __FILE__, __LINE__);
 #ifdef BOARD_TRMNL_X_SENSORIAS3
   uint32_t refreshSeconds = preferences.getUInt(PREFERENCES_SLEEP_TIME_KEY, SLEEP_TIME_TO_SLEEP);
+  uint32_t wake_epoch = 0;
+  uint32_t fallbackSleepSeconds = refreshSeconds;
 
   // Program RV3032 next wake (only if RTC was successfully initialised)
   if (rtc_ok) {
     rtc_ultra_program_next_wake(refreshSeconds);
 
+    wake_epoch = rtc_ultra_compute_next_wake_epoch(refreshSeconds);
+    time_t now_t = time(nullptr);
+    if (now_t > 0 && wake_epoch > (uint32_t)now_t) {
+      fallbackSleepSeconds = wake_epoch - (uint32_t)now_t;
+    }
+
     // Debug: show next wake time at the top of the e-paper display.
     // The image is retained without power so the time is visible while the device is off.
-    uint32_t wake_epoch = rtc_ultra_compute_next_wake_epoch(refreshSeconds);
     struct tm wake_tm;
     time_t wake_t = (time_t)wake_epoch;
     localtime_r(&wake_t, &wake_tm);
@@ -1369,8 +1384,16 @@ void bl_init(void)
   pinMode(SENSOR_SCL, INPUT);
   pinMode(SENSOR_SDA, INPUT);
 
-  // Release power-hold latch: RTC INT will restore power on next alarm
+  // Fallback: if the external power-hold shutdown does not actually cut power,
+  // enter regular ESP deep sleep for the same interval as the RTC wake.
+  esp_sleep_enable_timer_wakeup((uint64_t)fallbackSleepSeconds * SLEEP_uS_TO_S_FACTOR);
+
+  // Release power-hold latch: RTC INT should restore power on next alarm.
   gpio_set_level(GPIO_NUM_21, 0);
+  delay(20);
+
+  Log.info("[RTC] power-hold released; entering deep sleep fallback for %u seconds\n", fallbackSleepSeconds);
+  esp_deep_sleep_start();
 
   return;
 #else
@@ -3180,8 +3203,8 @@ static bool setClock(bool force_ntp)
 
   String ntp = prefs.getString("ntp_server", "time.google.com");
 
-  Log.info("%s [%d]: Using NTP: %s, fallback: time.cloudflare.com\r\n", __FILE__, __LINE__, ntp.c_str());
-  configTime(0, 0, ntp.c_str(), "time.cloudflare.com");
+  Log.info("%s [%d]: Using NTP: %s, fallback: time.cloudflare.com, TZ: %s\r\n", __FILE__, __LINE__, ntp.c_str(), DEVICE_TIMEZONE);
+  configTzTime(DEVICE_TIMEZONE, ntp.c_str(), "time.cloudflare.com");
 
   for (int i = 0; i < SNTP_MAX_SERVERS; i++)
   {
