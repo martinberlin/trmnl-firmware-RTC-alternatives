@@ -5,11 +5,11 @@
 #include <config.h>
 #include <api_response_parsing.h>
 #include <http_client.h>
-#ifdef SENSOR_SDA
+#if defined(SENSOR_SDA) && !defined(BOARD_TRMNL_X_SENSORIAS3)
 extern int lastCO2, lastSCDTemp, lastTemp, lastSCDHumid, lastHumid, lastPressure, lastType, lastTime;
 const char *szDevices[] = {"None", "AHT20", "BMP180", "BME280", "BMP388", "SHT3X", "HDC1080", "HTS221", "MCP9808"};
 const char *szMakers[] = {"None", "ASAIR", "Bosch", "Bosch", "Bosch", "Sensirion", "TI", "STMicro","MicroChip"};
-#endif // SENSOR_SDA
+#endif // SENSOR_SDA && !BOARD_TRMNL_X_SENSORIAS3
 
 void addHeaders(HTTPClient &https, ApiDisplayInputs &inputs)
 {
@@ -60,7 +60,7 @@ void addHeaders(HTTPClient &https, ApiDisplayInputs &inputs)
   https.addHeader("RSSI", String(inputs.rssi));
   https.addHeader("Width", String(inputs.displayWidth));
   https.addHeader("Height", String(inputs.displayHeight));
-#ifdef SENSOR_SDA
+#if defined(SENSOR_SDA) && !defined(BOARD_TRMNL_X_SENSORIAS3)
   char *szTemp, szPart[128];
   szTemp = (char *)malloc(1024); // make sure we have enough space, but don't use the stack because it's small
   if (lastCO2 != 0) { // valid data from SCD4x for CO2, Temperature and Humidity
@@ -90,7 +90,7 @@ void addHeaders(HTTPClient &https, ApiDisplayInputs &inputs)
     Log_info("%s [%d] Sensor data not available", __FILE__, __LINE__);
   }
   free(szTemp);
-#endif // SENSOR_SDA
+#endif // SENSOR_SDA && !BOARD_TRMNL_X_SENSORIAS3
 
   if (inputs.specialFunction != SF_NONE)
   {

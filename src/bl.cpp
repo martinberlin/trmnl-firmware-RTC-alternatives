@@ -43,6 +43,11 @@
 #include "loading.h"
 #include <wifi-helpers.h>
 #include <sys/time.h>
+
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+#include "rtc_ultra_sleep.h"
+#endif
+
 #ifdef SENSOR_SDA
 #include <bb_scd41.h>
 #include <bb_temperature.h>
@@ -93,7 +98,7 @@ static void downloadSetupImage();                    // download and display set
 static void resetDeviceCredentials(void);            // reset device credentials API key, Friendly ID, Wi-Fi SSID and password
 static void checkAndPerformFirmwareUpdate(void);     // OTA update
 static void goToSleep(void);                         // sleep preparing
-static bool setClock(void);                          // clock synchronization
+static bool setClock(bool force_ntp = false);        // clock synchronization
 static float readBatteryVoltage(void);               // battery voltage reading
 static void submitStoredLogs(void);
 static void writeSpecialFunction(SPECIAL_FUNCTION function);
@@ -107,6 +112,7 @@ static bool checkCurrentFileName(String &newName);
 static bool saveCurrentFileName(String &name);
 void fixFileName(const char *src, char *dest);
 static DeviceStatusStamp getDeviceStatusStamp();
+static void configureDeviceTimezone();
 void log_nvs_usage();
 void config_gpio_for_lp();
 int png_to_epd(const uint8_t *pPNG, int iDataSize, bool bPrevious);
@@ -125,6 +131,13 @@ void wait_for_serial() {
     }
   Log_info("## Waited for serial.. %d ms", idx * 100);
 #endif
+}
+
+static void configureDeviceTimezone()
+{
+  setenv("TZ", DEVICE_TIMEZONE, 1);
+  tzset();
+  Log_info("Timezone configured: %s", DEVICE_TIMEZONE);
 }
 
 #ifdef BOARD_TRMNL_X_SENSORIAS3 
@@ -549,7 +562,7 @@ void bl_init(void)
 
 #if defined(BOARD_TRMNL_X_SENSORIAS3) || defined(BOARD_TRMNL_X)
   pinMode(21, OUTPUT); // power hold GPIO must be set high otherwise the board will power itself off
-  digitalWrite(21, OUTPUT);
+  digitalWrite(21, HIGH);
 // Use the RV3032 RTC to hold the power on with a fake low temperature interrupt
 //Wire.begin(40,41);
 //Wire.beginTransmission(0x51); // RV3032 address
@@ -567,6 +580,7 @@ void bl_init(void)
   wait_for_serial();
   Log.begin(LOG_LEVEL_VERBOSE, &Serial);
 #endif
+  configureDeviceTimezone();
   Log_info("BL init success");
   pins_init();
   vBatt = readBatteryVoltage(); // Read the battery voltage BEFORE WiFi is turned on
@@ -601,7 +615,7 @@ void bl_init(void)
    filesystem_init();
 #endif // EPDIY
 
-#ifdef BOARD_TRMNL_X
+#ifdef BOARD_TRMNL_X 
   // Notify IQS323 task about wakeup type BEFORE starting the task
 
   Log.info("%s [%d]: Display init\r\n", __FILE__, __LINE__);
@@ -715,12 +729,26 @@ void bl_init(void)
   }
 #endif
 
-#ifdef SENSOR_SDA
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  // Initialise the RTC early — before the SCD41 light-sleep — so the boot
+  // status (including whether the previous alarm fired) appears in the serial
+  // log before USB-CDC is suspended by esp_light_sleep_start().
+  static bool rtc_ok = false;
+  rtc_ok = rtc_ultra_begin();
+  if (rtc_ok) {
+    // Seed the system clock from the RTC so sensor sample timestamps are
+    // meaningful.  NTP (called after WiFi connects) will overwrite this with
+    // a precise value and push it back to the RTC via
+    // rtc_ultra_set_time_from_system().
+    rtc_ultra_sync_system_clock();
+  }
+#endif
+
+/* #ifdef SENSOR_SDA
   // check if there is a SCD41 or supported temperature sensor attached
   if (scd41.init(SENSOR_SDA, SENSOR_SCL) == SCD41_SUCCESS) {
     bCO2 = true;
     Log.info("%s [%d]: SCD41 sensor found!\r\n", __FILE__, __LINE__);
-//    scd41.start(SCD41_MODE_PERIODIC);
     scd41.wakeup();
     // The SCD41 needs to be re-initialized after big Vcc variations from the last wakeup
     // put it in a 'confused' state. If we don't re-initialize it, it won't generate more samples
@@ -729,6 +757,10 @@ void bl_init(void)
     scd41.triggerSample(); // trigger a 'one-shot' sample that takes about 5 seconds to complete
     esp_sleep_enable_timer_wakeup(5000 * 1000L); // sleep for 5 seconds for sample to finish
     esp_light_sleep_start();
+#if defined(DEV_FIRMWARE) && defined(ARDUINO_USB_CDC_ON_BOOT)
+    delay(500); // allow USB-CDC to re-enumerate after light sleep
+    wait_for_serial();
+#endif
     if (scd41.getSample() == SCD41_SUCCESS) {
         time((time_t *)&lastTime); // get the UTC epoch time that the same was captured
         lastCO2 = scd41.co2();
@@ -749,6 +781,10 @@ void bl_init(void)
     bbt.start(); // start the sensor
     esp_sleep_enable_timer_wakeup(5000 * 1000L); // sleep for 5 seconds for sample to finish
     esp_light_sleep_start();
+#if defined(DEV_FIRMWARE) && defined(ARDUINO_USB_CDC_ON_BOOT)
+    delay(500); // allow USB-CDC to re-enumerate after light sleep
+    wait_for_serial();
+#endif
     if (bbt.getSample(&bbts) == BBT_SUCCESS) {
         time((time_t *)&lastTime); // get the UTC epoch time that the same was captured
         lastTemp = bbts.temperature;
@@ -765,7 +801,7 @@ void bl_init(void)
   if (!bCO2 && iSensorType < 0) {
     Log.info("%s [%d]: No sensor found on I2C bus %d/%d\r\n", __FILE__, __LINE__, SENSOR_SDA, SENSOR_SCL);
   }
-#endif // SENSOR_SDA
+#endif // SENSOR_SDA */
 
 #if !defined( BOARD_TRMNL_X ) && !defined( BOARD_TRMNL_X_EPDIY) && !defined( BOARD_TRMNL_X_LILYGO ) && !defined( BOARD_TRMNL_X_SENSORIAC5 ) && !defined( BOARD_TRMNL_X_SENSORIAS3 ) 
   if (double_click)
@@ -1100,17 +1136,40 @@ void bl_init(void)
 
 #endif
 
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  // RTC was already initialised before the sensor block (see above) so that
+  // boot-status logs appear before esp_light_sleep_start() suspends USB-CDC.
+#endif
+
   // clock synchronization
+  // For SENSORIAS3 the system clock was just seeded from the RTC (which may
+  // have the wrong time until NTP corrects it). Always force an NTP query so
+  // the RTC is corrected on every WiFi-connected wake cycle.
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  bool ntpOk = setClock(/*force_ntp=*/true);
+#else
+  bool ntpOk = setClock();
+#endif
+
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  if (rtc_ok && ntpOk) {
+    // Always sync RTC from NTP whenever a WiFi connection is available so that a
+    // plausible-but-wrong RTC time (epoch >= 2024-01-01) gets corrected too.
+    rtc_ultra_set_time_from_system();
+  }
+  #else
   if (setClock())
-  {
-    time_since_sleep = preferences.getUInt(PREFERENCES_LAST_SLEEP_TIME, 0);
-    time_since_sleep = time_since_sleep ? getTime() - time_since_sleep : 0; // may be can be used even if no sync
-  }
-  else
-  {
-    time_since_sleep = 0;
-    Log.info("%s [%d]: Time wasn't synced.\r\n", __FILE__, __LINE__);
-  }
+    {
+      time_since_sleep = preferences.getUInt(PREFERENCES_LAST_SLEEP_TIME, 0);
+      time_since_sleep = time_since_sleep ? getTime() - time_since_sleep : 0; // may be can be used even if no sync
+    }
+    else
+    {
+      time_since_sleep = 0;
+      Log.info("%s [%d]: Time wasn't synced.\r\n", __FILE__, __LINE__);
+    } 
+#endif
+
 
   Log.info("%s [%d]: Time since last sleep: %d\r\n", __FILE__, __LINE__, time_since_sleep);
 
@@ -1287,11 +1346,61 @@ void bl_init(void)
 
   // display go to sleep
   Log_info("%s [%d]: BL done, going to sleep...", __FILE__, __LINE__);
+#ifdef BOARD_TRMNL_X_SENSORIAS3
+  uint32_t refreshSeconds = preferences.getUInt(PREFERENCES_SLEEP_TIME_KEY, SLEEP_TIME_TO_SLEEP);
+  uint32_t wake_epoch = 0;
+  uint32_t fallbackSleepSeconds = refreshSeconds;
+
+  // Program RV3032 next wake (only if RTC was successfully initialised)
+  if (rtc_ok) {
+    rtc_ultra_program_next_wake(refreshSeconds);
+
+    wake_epoch = rtc_ultra_compute_next_wake_epoch(refreshSeconds);
+    time_t now_t = time(nullptr);
+    if (now_t > 0 && wake_epoch > (uint32_t)now_t) {
+      fallbackSleepSeconds = wake_epoch - (uint32_t)now_t;
+    }
+
+    // Debug: show next wake time at the top of the e-paper display.
+    // The image is retained without power so the time is visible while the device is off.
+    struct tm wake_tm;
+    time_t wake_t = (time_t)wake_epoch;
+    localtime_r(&wake_t, &wake_tm);
+    char wake_label[24];
+    snprintf(wake_label, sizeof(wake_label), "Next: %02d:%02d",
+             wake_tm.tm_hour, wake_tm.tm_min);
+    display_show_wake_label(wake_label);
+  } else {
+    Log.warning("[RTC] skipping alarm programming - RTC not initialised\n");
+  }
+
+  // Clean shutdown steps
   display_sleep();
-  if (!update_firmware)
-    goToSleep();
-  else
-    ESP.restart();
+  filesystem_deinit();
+  preferences.end();
+
+  // Float the I2C pins so they don't fight the RTC or pull current while off.
+  Wire.end();
+  pinMode(SENSOR_SCL, INPUT);
+  pinMode(SENSOR_SDA, INPUT);
+
+  // Fallback: if the external power-hold shutdown does not actually cut power,
+  // enter regular ESP deep sleep for the same interval as the RTC wake.
+  esp_sleep_enable_timer_wakeup((uint64_t)fallbackSleepSeconds * SLEEP_uS_TO_S_FACTOR);
+
+  // Release power-hold latch: RTC INT should restore power on next alarm.
+  gpio_set_level(GPIO_NUM_21, 0);
+  delay(20);
+
+  Log.info("[RTC] power-hold released; entering deep sleep fallback for %u seconds\n", fallbackSleepSeconds);
+  esp_deep_sleep_start();
+
+  return;
+#else
+  display_sleep();
+  if (!update_firmware) goToSleep();
+  else ESP.restart();
+#endif
 }
 
 /**
@@ -3051,7 +3160,7 @@ void config_gpio_for_lp() {
  * @param none
  * @return none
  */
-static bool setClock()
+static bool setClock(bool force_ntp)
 {
   int iDeltaTime;
   Preferences prefs;
@@ -3062,7 +3171,7 @@ static bool setClock()
   uint32_t u32Epoch = prefs.getUInt("last_sync", 0); // Get the last time sync time
   iDeltaTime = getTime() - u32Epoch; // Number of seconds since the last sync
   Log.info("%s [%d]: epoch time: %d iDelta: %d\r\n", __FILE__, __LINE__, getTime(), iDeltaTime);
-  if (u32Epoch != 0 && iDeltaTime > 0 && iDeltaTime < 24*60*60) { // Less than 24h, no need to sync the time
+  if (!force_ntp && u32Epoch != 0 && iDeltaTime > 0 && iDeltaTime < 24*60*60) { // Less than 24h, no need to sync the time
       Log.info("%s [%d]: Skipping time sync\r\n", __FILE__, __LINE__);
       prefs.end();
       return true;
@@ -3094,8 +3203,8 @@ static bool setClock()
 
   String ntp = prefs.getString("ntp_server", "time.google.com");
 
-  Log.info("%s [%d]: Using NTP: %s, fallback: time.cloudflare.com\r\n", __FILE__, __LINE__, ntp.c_str());
-  configTime(0, 0, ntp.c_str(), "time.cloudflare.com");
+  Log.info("%s [%d]: Using NTP: %s, fallback: time.cloudflare.com, TZ: %s\r\n", __FILE__, __LINE__, ntp.c_str(), DEVICE_TIMEZONE);
+  configTzTime(DEVICE_TIMEZONE, ntp.c_str(), "time.cloudflare.com");
 
   for (int i = 0; i < SNTP_MAX_SERVERS; i++)
   {
