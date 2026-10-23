@@ -83,6 +83,8 @@ enum WIFI_CONNECT_RETRY_TIME // Time to sleep before trying to connect to the Wi
 #elif defined(BOARD_TRMNL_X_EPDIY)
 #define PIN_INTERRUPT 0
 #define DEVICE_MODEL "x"
+#define SENSOR_SDA 39
+#define SENSOR_SCL 40
 #elif defined(BOARD_TRMNL_X_SENSORIAC5)
 #define PIN_INTERRUPT 0
 #define DEVICE_MODEL "Sensoria_C5"

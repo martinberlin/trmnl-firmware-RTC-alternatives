@@ -17,6 +17,13 @@
 #define STATUS_IRQ1_TRIGGERED 2
 #endif
 
+#ifndef SENSOR_SDA
+#define SENSOR_SDA 39
+#endif
+#ifndef SENSOR_SCL
+#define SENSOR_SCL 40
+#endif
+
 static BBRTC g_rtc;
 
 // RV3032 register / bit constants used outside the bb_rtc library

@@ -24,6 +24,455 @@
 #define TWO_BIT_PANEL EP75_800x480_4GRAY_OLD
 BBEPAPER bbep(ONE_BIT_PANEL);
 // Counts the number of partial updates to know when to do a full update
+#elif defined( BOARD_TRMNL_X_EPDIY )
+#include "epdiy.h"
+#include "epd_highlevel.h"
+#include "../lib/bb_epaper/src/Group5.h"
+#include "../lib/bb_epaper/src/g5dec.inl"
+
+#define BBEP_BLACK 0
+#define BBEP_WHITE 1
+#define BBEP_TRANSPARENT 255
+
+enum {
+    CLEAR_NONE = 0,
+    CLEAR_FAST,
+    CLEAR_SLOW,
+    CLEAR_WHITE,
+    CLEAR_BLACK,
+};
+
+enum {
+    BB_MODE_NONE = 0,
+    BB_MODE_1BPP,
+    BB_MODE_2BPP,
+    BB_MODE_4BPP,
+};
+
+typedef struct bbepr {
+    int x;
+    int y;
+    int w;
+    int h;
+} BB_RECT;
+
+static uint8_t epdiyUnicodeTo1252(uint16_t u16CP)
+{
+    switch (u16CP) {
+        case 0x20ac: u16CP = 0x80; break;
+        case 0x201a: u16CP = 0x82; break;
+        case 0x0192: u16CP = 0x83; break;
+        case 0x201e: u16CP = 0x84; break;
+        case 0x2026: u16CP = 0x85; break;
+        case 0x2020: u16CP = 0x86; break;
+        case 0x2021: u16CP = 0x87; break;
+        case 0x02c6: u16CP = 0x88; break;
+        case 0x2030: u16CP = 0x89; break;
+        case 0x0160: u16CP = 0x8a; break;
+        case 0x2039: u16CP = 0x8b; break;
+        case 0x0152: u16CP = 0x8c; break;
+        case 0x017d: u16CP = 0x8e; break;
+        case 0x2018: u16CP = 0x91; break;
+        case 0x2019: u16CP = 0x92; break;
+        case 0x201c: u16CP = 0x93; break;
+        case 0x201d: u16CP = 0x94; break;
+        case 0x2022: u16CP = 0x95; break;
+        case 0x2013: u16CP = 0x96; break;
+        case 0x2014: u16CP = 0x97; break;
+        case 0x02dc: u16CP = 0x98; break;
+        case 0x2122: u16CP = 0x99; break;
+        case 0x0161: u16CP = 0x9a; break;
+        case 0x203a: u16CP = 0x9b; break;
+        case 0x0153: u16CP = 0x9c; break;
+        case 0x017e: u16CP = 0x9e; break;
+        case 0x0178: u16CP = 0x9f; break;
+        default:
+            if (u16CP > 0xff) u16CP = 32;
+            break;
+    }
+    return (uint8_t)u16CP;
+}
+
+static void epdiyUnicodeString(const char *szMsg, uint8_t *szExtMsg, size_t maxOut)
+{
+    size_t i = 0, j = 0;
+    while (szMsg[i] && j + 1 < maxOut) {
+        uint8_t c = (uint8_t)szMsg[i++];
+        uint16_t u16CP;
+        if (c < 0x80) {
+            u16CP = c;
+        } else if (c < 0xe0 && szMsg[i]) {
+            u16CP = ((uint16_t)(c & 0x3f) << 6) | ((uint8_t)szMsg[i++] & 0x3f);
+        } else if (c < 0xf0 && szMsg[i] && szMsg[i + 1]) {
+            u16CP = ((uint16_t)(c & 0x3f) << 12) | (((uint8_t)szMsg[i] & 0x3f) << 6) | ((uint8_t)szMsg[i + 1] & 0x3f);
+            i += 2;
+        } else {
+            u16CP = 32;
+        }
+        szExtMsg[j++] = epdiyUnicodeTo1252(u16CP);
+    }
+    szExtMsg[j] = 0;
+}
+
+class EpdiyDisplay : public Print
+{
+public:
+    EpdiyDisplay() = default;
+
+    void init()
+    {
+        if (_initialized) return;
+        epd_init(&epd_board_v7_103, &ED103MC2, EPD_LUT_64K);
+        epd_set_vcom(1560);
+        _hl = epd_hl_init(EPD_BUILTIN_WAVEFORM);
+        _width = epd_width();
+        _height = epd_height();
+        _initialized = true;
+        _powerOn = false;
+    }
+
+    int16_t width() const { return _width; }
+    int16_t height() const { return _height; }
+
+    uint8_t *currentBuffer() { return _initialized ? epd_hl_get_framebuffer(&_hl) : nullptr; }
+    uint8_t *previousBuffer() { return _initialized ? _hl.back_fb : nullptr; }
+    uint8_t *tempBuffer() { return _tempLine; }
+
+    int setMode(int iMode) { _mode = (uint8_t)iMode; return 0; }
+    int getMode() const { return _mode; }
+    int getPreviousMode() const { return _prevMode; }
+    void setPreviousMode(uint8_t prev_mode) { _prevMode = prev_mode; }
+    int setCustomMatrix(const uint8_t *pMatrix, size_t matrix_size)
+    {
+        (void)pMatrix;
+        (void)matrix_size;
+        return 0;
+    }
+
+    static inline uint8_t mapColorNibble(int c)
+    {
+        if (c == BBEP_BLACK) return 0x0;
+        if (c == BBEP_WHITE) return 0xF;
+        return (uint8_t)(c & 0x0F);
+    }
+
+    inline void drawPixel4bpp(int x, int y, int color)
+    {
+        if (color == BBEP_TRANSPARENT || x < 0 || x >= _width || y < 0 || y >= _height) return;
+        uint8_t *fb = currentBuffer();
+        if (!fb) return;
+        uint8_t nib = mapColorNibble(color);
+        uint8_t *p = &fb[y * (_width / 2) + (x >> 1)];
+        if (x & 1) {
+            *p = (*p & 0x0F) | (nib << 4);
+        } else {
+            *p = (*p & 0xF0) | nib;
+        }
+    }
+
+    void fillScreen(uint8_t iColor)
+    {
+        uint8_t *fb = currentBuffer();
+        if (!fb) return;
+        uint8_t nib = mapColorNibble(iColor);
+        uint8_t byteVal = nib | (nib << 4);
+        memset(fb, byteVal, (_width / 2) * _height);
+    }
+
+    void setCursor(int x, int y)
+    {
+        if (x >= 0) _cursorX = x;
+        if (y >= 0) _cursorY = y;
+    }
+
+    void setTextColor(int iFG, int iBG = BBEP_TRANSPARENT)
+    {
+        _iFG = iFG;
+        _iBG = (iBG == -1) ? iFG : iBG;
+    }
+
+    void setFont(const void *pFont, bool bAntiAliased = false)
+    {
+        _pFont = pFont;
+        (void)bAntiAliased;
+    }
+
+    int loadG5Image(const uint8_t *pG5, int x, int y, int iFG, int iBG, float fScale = 1.0f)
+    {
+        if (!pG5 || fScale < 0.01f) return -1;
+        uint32_t u32Frac = (uint32_t)(65536.0f / fScale);
+        const BB_BITMAP *pbbb = (const BB_BITMAP *)pG5;
+        if (pgm_read_word(&pbbb->u16Marker) != BB_BITMAP_MARKER) return -1;
+        uint16_t cx = pgm_read_word(&pbbb->width);
+        uint16_t cy = pgm_read_word(&pbbb->height);
+        int dx = (int)(fScale * (float)cx);
+        int dy = (int)(fScale * (float)cy);
+        uint16_t size = pgm_read_word(&pbbb->size);
+        if (iFG == -1) iFG = BBEP_WHITE;
+        if (iBG == -1) iBG = BBEP_BLACK;
+        int rc = g5_decode_init(&_g5dec, cx, cy, (uint8_t *)&pbbb[1], size);
+        if (rc != G5_SUCCESS) return -1;
+        uint32_t u32YAcc = 65536;
+        for (int ty = y; ty < y + dy && ty < _height; ty++) {
+            while (u32YAcc >= 65536) {
+                g5_decode_line(&_g5dec, _tempLine);
+                u32YAcc -= 65536;
+            }
+            const uint8_t *s = _tempLine;
+            uint32_t u32XAcc = 0;
+            uint8_t u8 = *s++;
+            uint8_t src_mask = 0x80;
+            for (int tx = x; tx < x + dx && tx < _width; tx++) {
+                if (u8 & src_mask) {
+                    if (iFG != BBEP_TRANSPARENT) drawPixel4bpp(tx, ty, iFG);
+                } else {
+                    if (iBG != BBEP_TRANSPARENT) drawPixel4bpp(tx, ty, iBG);
+                }
+                u32XAcc += u32Frac;
+                while (u32XAcc >= 65536) {
+                    u32XAcc -= 65536;
+                    src_mask >>= 1;
+                    if (src_mask == 0) {
+                        u8 = *s++;
+                        src_mask = 0x80;
+                    }
+                }
+            }
+            u32YAcc += u32Frac;
+        }
+        return 0;
+    }
+
+    int getStringBox(const char *szMsg, BB_RECT *pRect)
+    {
+        if (!pRect || !szMsg) return -1;
+        int cx = 0, miny = 4000, maxy = 0;
+        if (!_pFont) {
+            miny = 0;
+            maxy = 8;
+            cx = 8 * (int)strlen(szMsg);
+        } else {
+            uint8_t szExtMsg[256];
+            epdiyUnicodeString(szMsg, szExtMsg, sizeof(szExtMsg));
+            const BB_FONT *pBBF = nullptr;
+            const BB_FONT_SMALL *pBBFS = nullptr;
+            if (pgm_read_word(_pFont) == BB_FONT_MARKER) {
+                pBBF = (const BB_FONT *)_pFont;
+            } else {
+                pBBFS = (const BB_FONT_SMALL *)_pFont;
+            }
+            for (size_t i = 0; szExtMsg[i]; i++) {
+                unsigned int c = szExtMsg[i];
+                if (pBBF) {
+                    if (c < pgm_read_byte(&pBBF->first) || c > pgm_read_byte(&pBBF->last)) continue;
+                    c -= pgm_read_byte(&pBBF->first);
+                    const BB_GLYPH *pGlyph = &pBBF->glyphs[c];
+                    cx += pgm_read_word(&pGlyph->xAdvance);
+                    int16_t yOff = (int16_t)pgm_read_word(&pGlyph->yOffset);
+                    int16_t gh = (int16_t)pgm_read_word(&pGlyph->height);
+                    if (yOff < miny) miny = yOff;
+                    if (gh + yOff > maxy) maxy = gh + yOff;
+                } else {
+                    if (c < pgm_read_byte(&pBBFS->first) || c > pgm_read_byte(&pBBFS->last)) continue;
+                    c -= pgm_read_byte(&pBBFS->first);
+                    const BB_GLYPH_SMALL *pSmallGlyph = &pBBFS->glyphs[c];
+                    cx += pgm_read_byte(&pSmallGlyph->xAdvance);
+                    int8_t yOff = (int8_t)pgm_read_byte(&pSmallGlyph->yOffset);
+                    uint8_t gh = pgm_read_byte(&pSmallGlyph->height);
+                    if (yOff < miny) miny = yOff;
+                    if ((int)gh + yOff > maxy) maxy = (int)gh + yOff;
+                }
+            }
+        }
+        if (miny > maxy) {
+            miny = 0;
+            maxy = 0;
+        }
+        pRect->w = cx;
+        pRect->x = _cursorX;
+        pRect->y = _cursorY + miny;
+        pRect->h = maxy - miny + 1;
+        return 0;
+    }
+
+    void getStringBox(const String &str, BB_RECT *pRect)
+    {
+        getStringBox(str.c_str(), pRect);
+    }
+
+    using Print::write;
+    size_t write(uint8_t c) override
+    {
+        static int iUnicodeCount = 0;
+        static uint8_t u8Unicode0 = 0, u8Unicode1 = 0;
+
+        if (iUnicodeCount == 0) {
+            if (c >= 0x80) {
+                iUnicodeCount++;
+                u8Unicode0 = c;
+                return 1;
+            }
+        } else {
+            uint16_t u16Code;
+            if (u8Unicode0 < 0xe0) {
+                u16Code = ((uint16_t)(u8Unicode0 & 0x3f) << 6) + (c & 0x3f);
+                c = epdiyUnicodeTo1252(u16Code);
+                iUnicodeCount = 0;
+            } else {
+                if (iUnicodeCount == 1) {
+                    iUnicodeCount++;
+                    u8Unicode1 = c;
+                    return 1;
+                }
+                u16Code = ((uint16_t)(u8Unicode0 & 0x3f) << 12) + ((uint16_t)(u8Unicode1 & 0x3f) << 6) + (c & 0x3f);
+                c = epdiyUnicodeTo1252(u16Code);
+                iUnicodeCount = 0;
+            }
+        }
+
+        if (!_pFont) return 1;
+
+        const BB_FONT *pBBF = nullptr;
+        const BB_FONT_SMALL *pBBFS = nullptr;
+        uint16_t first, last;
+        const uint8_t *pBits = (const uint8_t *)_pFont;
+
+        if (*(const uint16_t *)_pFont == BB_FONT_MARKER) {
+            pBBF = (const BB_FONT *)_pFont;
+            first = pBBF->first;
+            last = pBBF->last;
+            pBits += sizeof(BB_FONT) + (last - first + 1) * sizeof(BB_GLYPH);
+        } else {
+            pBBFS = (const BB_FONT_SMALL *)_pFont;
+            first = pBBFS->first;
+            last = pBBFS->last;
+            pBits += sizeof(BB_FONT_SMALL) + (last - first + 1) * sizeof(BB_GLYPH_SMALL);
+        }
+
+        if (c == '\n') {
+            _cursorX = 0;
+            _cursorY += pBBF ? pBBF->height : pBBFS->height;
+            return 1;
+        }
+        if (c == '\r' || c < first || c > last) {
+            return 1;
+        }
+
+        uint16_t glyphIdx = c - first;
+        int w, h, xOff, yOff, xAdv, bmpOff, nextBmpOff;
+        if (pBBF) {
+            const BB_GLYPH *g = &pBBF->glyphs[glyphIdx];
+            w = g->width;
+            h = g->height;
+            xOff = g->xOffset;
+            yOff = g->yOffset;
+            xAdv = g->xAdvance;
+            bmpOff = g->bitmapOffset;
+            nextBmpOff = g[1].bitmapOffset;
+        } else {
+            const BB_GLYPH_SMALL *g = &pBBFS->glyphs[glyphIdx];
+            w = g->width;
+            h = g->height;
+            xOff = g->xOffset;
+            yOff = g->yOffset;
+            xAdv = g->xAdvance;
+            bmpOff = g->bitmapOffset;
+            nextBmpOff = g[1].bitmapOffset;
+        }
+
+        if (w > 1 && h > 0) {
+            const uint8_t *s = pBits + bmpOff;
+            int dy = _cursorY + yOff;
+            int drawH = h;
+            if (dy + drawH > _height) drawH = _height - dy;
+            int compSize = nextBmpOff - bmpOff;
+            if (compSize < 0 || compSize > 4096) compSize = 4096;
+            if (g5_decode_init(&_g5dec, w, drawH, (uint8_t *)s, compSize) == G5_SUCCESS) {
+                int tw = w;
+                if (_cursorX + tw + xOff > _width) tw = _width - (_cursorX + xOff);
+                int iBG = (_iBG == -1) ? BBEP_TRANSPARENT : _iBG;
+                for (int ty = dy; ty < dy + drawH && ty < _height; ty++) {
+                    g5_decode_line(&_g5dec, _tempLine);
+                    if (ty >= 0) {
+                        const uint8_t *linePtr = _tempLine;
+                        uint8_t u8 = *linePtr++;
+                        uint8_t u8Count = 8;
+                        for (int tx = _cursorX; tx < _cursorX + tw; tx++) {
+                            if (u8 & 0x80) {
+                                if (_iFG != BBEP_TRANSPARENT) drawPixel4bpp(tx + xOff, ty, _iFG);
+                            } else if (iBG != BBEP_TRANSPARENT) {
+                                drawPixel4bpp(tx + xOff, ty, iBG);
+                            }
+                            u8 <<= 1;
+                            if (--u8Count == 0) {
+                                u8Count = 8;
+                                u8 = *linePtr++;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _cursorX += xAdv;
+        return 1;
+    }
+
+    int einkPower(int bOn)
+    {
+        if (!_initialized) return -1;
+        if (bOn && !_powerOn) {
+            epd_poweron();
+            _powerOn = true;
+        } else if (!bOn && _powerOn) {
+            epd_poweroff();
+            _powerOn = false;
+        }
+        return 0;
+    }
+
+    void deInit()
+    {
+        if (!_initialized) return;
+        einkPower(0);
+        epd_deinit();
+        _initialized = false;
+    }
+
+    int fullUpdate(int iClearMode = CLEAR_SLOW, bool bKeepOn = false, BB_RECT *pRect = NULL)
+    {
+        (void)pRect;
+        if (!_initialized) return -1;
+        einkPower(1);
+        if (iClearMode != CLEAR_NONE) {
+            epd_clear();
+            memset(_hl.back_fb, 0xFF, (_width / 2) * _height);
+        }
+        enum EpdDrawError err = epd_hl_update_screen(&_hl, MODE_GC16, (int)epd_ambient_temperature());
+        if (!bKeepOn) {
+            einkPower(0);
+        }
+        return (err == EPD_DRAW_SUCCESS) ? 0 : (int)err;
+    }
+
+private:
+    EpdiyHighlevelState _hl{};
+    bool _initialized = false;
+    bool _powerOn = false;
+    int _width = 1872;
+    int _height = 1404;
+    int _cursorX = 0;
+    int _cursorY = 0;
+    int _iFG = BBEP_BLACK;
+    int _iBG = BBEP_TRANSPARENT;
+    uint8_t _mode = BB_MODE_4BPP;
+    uint8_t _prevMode = BB_MODE_NONE;
+    const void *_pFont = nullptr;
+    uint8_t _tempLine[2048]{};
+    G5DECIMAGE _g5dec{};
+};
+
+EpdiyDisplay bbep;
+const uint8_t u8_graytable[] = { 0 };
 #else
 #include "FastEPD.h"
 FASTEPD bbep;
@@ -47,7 +496,9 @@ const uint8_t u8_graytable[] = {
 };
 #endif
 RTC_DATA_ATTR int iUpdateCount = 0;
+#ifndef BOARD_TRMNL_X_EPDIY
 #include "Group5.h"
+#endif
 #include <config.h>
 #include "wifi_connect_qr.h"
 #include "wifi_failed_qr.h"
@@ -78,6 +529,8 @@ void display_init(void)
 #ifdef BOARD_TRMNL_X
     bbep.initPanel(BB_PANEL_TRMNL_X);
 //    bbep.setPasses(3, 3);
+#elif defined( BOARD_TRMNL_X_EPDIY )
+    bbep.init();
 #elif defined( BOARD_TRMNL_X_SENSORIAS3 )
     bbep.initPanel(BB_PANEL_V7_RAW);
     bbep.setPanelSize(1280, 720, BB_PANEL_FLAG_MIRROR_Y , -1600);
@@ -671,6 +1124,18 @@ void ReduceBpp(int iDestBpp, int iPixelType, uint8_t *pPalette, uint8_t *pSrc, u
                     s++;
                 }
                 break;
+            case 1:
+                g = (s[0] >> (7 - (x & 7))) & 1;
+                if (iPixelType == PNG_PIXEL_INDEXED) {
+                    pPal = &pPalette[g * 3];
+                    g = (pPal[0] + pPal[1]*2 + pPal[2])/4;
+                } else {
+                    g = g ? 0xff : 0x00;
+                }
+                if ((x & 7) == 7) {
+                    s++;
+                }
+                break;
         } // switch on bpp
         if (iDestBpp == 1) {
             u8 |= (g >> 7); // B/W
@@ -767,6 +1232,57 @@ int png_draw(PNGDRAW *pDraw)
         }
     }
     bbep.writeData(pTemp, (pDraw->iWidth+7)/8);
+    return 1;
+} /* png_draw() */
+#elif defined( BOARD_TRMNL_X_EPDIY )
+int png_draw(PNGDRAW *pDraw)
+{
+    int x, y = pDraw->y;
+    uint8_t *s, *d;
+    int iPitch = bbep.width() / 2;
+
+    if (y >= bbep.height()) return 0; // image is larger than the display, stop decoding it
+    if (pDraw->iPixelType == PNG_PIXEL_INDEXED || pDraw->iBpp != 4) {
+        s = bbep.tempBuffer();
+        ReduceBpp(4, pDraw->iPixelType, pDraw->pPalette, pDraw->pPixels, s, pDraw->iWidth, pDraw->iBpp);
+    } else {
+        s = (uint8_t *)pDraw->pPixels;
+    }
+    if (pDraw->pUser) {
+        d = bbep.previousBuffer();
+        bbep.setPreviousMode(BB_MODE_4BPP);
+    } else {
+        d = bbep.currentBuffer();
+    }
+    if (!d) return 0;
+    if (bbep.width() >= pDraw->iWidth) { // normal orientation
+        d += y * iPitch;
+        int bytes = (pDraw->iWidth + 1) / 2;
+        for (x = 0; x < bytes; x++) {
+            uint8_t b = s[x];
+            d[x] = (b >> 4) | (b << 4);
+        }
+    } else { // rotated 90 degrees
+        d += (bbep.height() - 1) * iPitch;
+        d += (y / 2);
+        if (y & 1) { // odd column -> upper nibble in epdiy
+            for (x = 0; x < pDraw->iWidth; x += 2) {
+                *d = (*d & 0x0f) | (s[0] & 0xf0);
+                d -= iPitch;
+                *d = (*d & 0x0f) | ((s[0] & 0x0f) << 4);
+                d -= iPitch;
+                s++;
+            }
+        } else { // even column -> lower nibble in epdiy
+            for (x = 0; x < pDraw->iWidth; x += 2) {
+                *d = (*d & 0xf0) | (s[0] >> 4);
+                d -= iPitch;
+                *d = (*d & 0xf0) | (s[0] & 0x0f);
+                d -= iPitch;
+                s++;
+            }
+        }
+    }
     return 1;
 } /* png_draw() */
 #else // TRMNL_X version
@@ -982,6 +1498,19 @@ uint8_t src=0, uc=0, ucMask, *s, *d, *pTemp = bbep.getCache();
             bbep.writeData(pTemp, (pDraw->iWidth+7)/8);
         } // for y
     }
+#elif defined( BOARD_TRMNL_X_EPDIY )
+  int x, y, iPitch = bbep.width()/2; // 4-bpp drawing mode
+  uint8_t *s, *d, *pBuffer = bbep.currentBuffer();
+  if (!pBuffer) return 0;
+  for (y=0; y<pDraw->iHeight; y++) {
+    d = &pBuffer[((pDraw->y + y)*iPitch) + (pDraw->x/2)];
+    s = (uint8_t *)pDraw->pPixels;
+    s += (y * (pDraw->iWidth/2));
+    for (x=0; x<pDraw->iWidth/2; x++) {
+      uint8_t b = s[x];
+      d[x] = (b >> 4) | (b << 4);
+    }
+  } // for y
 #else // FastEPD
   int x, y, iPitch = bbep.width()/2; // assume 4-bpp drawing mode
   uint8_t *s, *d, *pBuffer = bbep.currentBuffer();
@@ -1115,7 +1644,7 @@ PNG *png = new PNG();
                 bbep.startWrite(PLANE_1); // start writing image data to plane 1
                 png->decode(&iPlane, 0); // decode it again to get plane 1 data
             }
-#else // FastEPD
+#else // FastEPD / epdiy
             switch (png->getBpp()) {
                 case 1:
                     bbep.setMode(BB_MODE_1BPP);

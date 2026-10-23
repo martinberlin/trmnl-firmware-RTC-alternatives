@@ -118,6 +118,13 @@ void config_gpio_for_lp();
 int png_to_epd(const uint8_t *pPNG, int iDataSize, bool bPrevious);
 static unsigned long startup_time = 0;
 
+#if defined( BOARD_TRMNL_X_EPDIY ) || defined( BOARD_TRMNL_X_SENSORIAC5 ) || defined( BOARD_TRMNL_X_LILYGO ) || defined( BOARD_TRMNL_X_PAPERS3 )
+// Create stub functions for the touchbar workaround
+void iqs323_task_i2c_lock(void) {}
+void iqs323_task_i2c_unlock(void) {}
+bool otg_message = false;
+#endif // EPDIY
+
 
 void wait_for_serial() {
 #ifdef WAIT_FOR_SERIAL
@@ -919,6 +926,7 @@ void bl_init(void)
     preferences.putString(PREFERENCES_FILENAME_KEY, "");
   }
 
+#if defined(BOARD_TRMNL_X_SENSORIAS3) || defined(BOARD_TRMNL_X)
   battery_count = detect_battery_count();
   battery_charging = is_charging();
   Log_info("BATTERY COUNT: %d", battery_count);
@@ -1016,6 +1024,7 @@ void bl_init(void)
   else {
     Log_info("No battery detected - skipping BQ27427 initialization");
   }
+#endif
 
   Log_info("Firmware version %s", FW_VERSION_STRING);
   Log_info("Arduino version %d.%d.%d", ESP_ARDUINO_VERSION_MAJOR, ESP_ARDUINO_VERSION_MINOR, ESP_ARDUINO_VERSION_PATCH);
@@ -1453,6 +1462,7 @@ ApiDisplayInputs loadApiDisplayInputs(Preferences &preferences)
   inputs.macAddress = WiFi.macAddress();
 
   inputs.batteryVoltage = readBatteryVoltage(); //readBatteryVoltage();
+#if defined(BOARD_TRMNL_X_SENSORIAS3) || defined(BOARD_TRMNL_X)
   inputs.batteryCount = battery_count;
   inputs.batteryCharging = battery_charging; // 1 charging, 0 not charging
   if (lipo._initialized) { // only report SoC if battery was detected and BQ27427 initialized successfully
@@ -1471,6 +1481,7 @@ ApiDisplayInputs loadApiDisplayInputs(Preferences &preferences)
     inputs.currentBatteryCapacity = -1;
     inputs.maxBatteryCapacity = -1;
   }
+#endif
 
   inputs.firmwareVersion = String(FW_VERSION_STRING);
 
