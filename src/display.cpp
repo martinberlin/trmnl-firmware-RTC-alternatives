@@ -123,7 +123,7 @@ public:
     {
         if (_initialized) return;
         epd_init(&epd_board_v7_103, &ED103MC2, EPD_LUT_64K);
-        epd_set_vcom(1560);
+        epd_set_vcom(2560);
         _hl = epd_hl_init(EPD_BUILTIN_WAVEFORM);
         _width = epd_width();
         _height = epd_height();
@@ -446,6 +446,7 @@ public:
         if (iClearMode != CLEAR_NONE) {
             epd_clear();
             memset(_hl.back_fb, 0xFF, (_width / 2) * _height);
+            vTaskDelay(1);
         }
         enum EpdDrawError err = epd_hl_update_screen(&_hl, MODE_GC16, (int)epd_ambient_temperature());
         if (!bKeepOn) {
